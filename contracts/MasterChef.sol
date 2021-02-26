@@ -4,17 +4,25 @@ pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/EnumerableSet.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "./SushiToken.sol";
 
-//主厨合约地址 0xc2EdaD668740f1aA35E4D8f227fB8E17dcA888Cd
+interface IGOT {
+    function mint(address _to, uint256 _amount) external;
+}
+
+interface ISimpleERCFund {
+    function deposit(
+        address token,
+        uint256 amount,
+        string memory reason
+    ) external;
+}
 
 // 迁移合约接口
 interface IMigratorChef {
-    // 执行从旧版UniswapV2到SushiSwap的LP令牌迁移
-    // Perform LP token migration from legacy UniswapV2 to SushiSwap.
+    // 执行从旧版UniswapV2到GoSwap的LP令牌迁移
+    // Perform LP token migration from legacy UniswapV2 to GoSwap.
     // 获取当前的LP令牌地址并返回新的LP令牌地址
     // Take the current LP token address and return the new LP token address.
     // 迁移者应该对调用者的LP令牌具有完全访问权限
@@ -25,26 +33,26 @@ interface IMigratorChef {
     // XXX Migrator必须具有对UniswapV2 LP令牌的权限访问权限
     // XXX Migrator must have allowance access to UniswapV2 LP tokens.
     //
-    // SushiSwap必须铸造完全相同数量的SushiSwap LP令牌，否则会发生不良情况。
+    // GoSwap必须铸造完全相同数量的GoSwap LP令牌，否则会发生不良情况。
     // 传统的UniswapV2不会这样做，所以要小心！
-    // SushiSwap must mint EXACTLY the same amount of SushiSwap LP tokens or
+    // GoSwap must mint EXACTLY the same amount of GoSwap LP tokens or
     // else something bad will happen. Traditional UniswapV2 does not
     // do that so be careful!
     function migrate(IERC20 token) external returns (IERC20);
 }
 
-// MasterChef是Sushi的主人。他可以做寿司，而且他是个好人。
+// MasterChef是GoSwap的主人。他可以做GOT，而且他是个好人。
 //
 // 请注意，它是可拥有的，所有者拥有巨大的权力。
-// 一旦SUSHI得到充分分配，所有权将被转移到治理智能合约中，
+// 一旦GOT得到充分分配，所有权将被转移到治理智能合约中，
 // 并且社区可以展示出自我治理的能力
 //
 // 祝您阅读愉快。希望它没有错误。上帝保佑。
 
-// MasterChef is the master of Sushi. He can make Sushi and he is a fair guy.
+// MasterChef is the master of GoSwap. He can make GoSwap and he is a fair guy.
 //
 // Note that it's ownable and the owner wields tremendous power. The ownership
-// will be transferred to a governance smart contract once SUSHI is sufficiently
+// will be transferred to a governance smart contract once GOT is sufficiently
 // distributed and the community can show to govern itself.
 //
 // Have fun reading it. Hopefully it's bug-free. God bless.
@@ -58,17 +66,17 @@ contract MasterChef is Ownable {
         uint256 amount; // How many LP tokens the user has provided.用户提供了多少个LP令牌。
         uint256 rewardDebt; // Reward debt. See explanation below.已奖励数额。请参阅下面的说明。
         //
-        // 我们在这里做一些有趣的数学运算。基本上，在任何时间点，授予用户但待分配的SUSHI数量为：
-        // We do some fancy math here. Basically, any point in time, the amount of SUSHIs
+        // 我们在这里做一些有趣的数学运算。基本上，在任何时间点，授予用户但待分配的GOT数量为：
+        // We do some fancy math here. Basically, any point in time, the amount of GOTs
         // entitled to a user but is pending to be distributed is:
         //
-        //   待处理的奖励 =（user.amount * pool.accSushiPerShare）-user.rewardDebt
-        //   pending reward = (user.amount * pool.accSushiPerShare) - user.rewardDebt
+        //   待处理的奖励 =（user.amount * pool.accGOTPerShare）-user.rewardDebt
+        //   pending reward = (user.amount * pool.accGOTPerShare) - user.rewardDebt
         //
         // 每当用户将lpToken存入到池子中或提取时。这是发生了什么：
         // Whenever a user deposits or withdraws LP tokens to a pool. Here's what happens:
-        //   1. 池子的每股累积SUSHI(accSushiPerShare)和分配发生的最后一个块号(lastRewardBlock)被更新
-        //   1. The pool's `accSushiPerShare` (and `lastRewardBlock`) gets updated.
+        //   1. 池子的每股累积GOT(accGOTPerShare)和分配发生的最后一个块号(lastRewardBlock)被更新
+        //   1. The pool's `accGOTPerShare` (and `lastRewardBlock`) gets updated.
         //   2. 用户收到待处理奖励。
         //   2. User receives the pending reward sent to his/her address.
         //   3. 用户的“amount”数额被更新
@@ -81,23 +89,24 @@ contract MasterChef is Ownable {
     // Info of each pool.
     struct PoolInfo {
         IERC20 lpToken; // Address of LP token contract.LP代币合约的地址
-        uint256 allocPoint; // How many allocation points assigned to this pool. SUSHIs to distribute per block.分配给该池的分配点数。 SUSHI按块分配
-        uint256 lastRewardBlock; // Last block number that SUSHIs distribution occurs.SUSHIs分配发生的最后一个块号
-        uint256 accSushiPerShare; // Accumulated SUSHIs per share, times 1e12. See below.每股累积SUSHI乘以1e12。见下文
+        uint256 allocPoint; // How many allocation points assigned to this pool. GOTs to distribute per block.分配给该池的分配点数。 GOT按块分配
+        uint256 lastRewardBlock; // Last block number that GOTs distribution occurs.GOTs分配发生的最后一个块号
+        uint256 accGOTPerShare; // Accumulated GOTs per share, times 1e12. See below.每股累积GOT乘以1e12。见下文
     }
 
-    // The SUSHI TOKEN!
-    SushiToken public sushi;
-    // Dev address.开发人员地址
-    address public devaddr;
+    // The GOT TOKEN!
+    address public constant GOT = 0xA7d5b5Dbc29ddef9871333AD2295B2E7D6F12391;
+    // Fund address.开发者奖励基金地址
+    address public fund = 0x57b91C4279A435913A64c490210d61978A0880C0;
+    uint256 public fundDivisor = 20;
     // 奖励结束块号
-    // Block number when bonus SUSHI period ends.
+    // Block number when bonus GOT period ends.
     uint256 public bonusEndBlock;
-    // 每块创建的SUSHI令牌
-    // SUSHI tokens created per block.
-    uint256 public sushiPerBlock;
-    // 早期寿司的奖金乘数
-    // Bonus muliplier for early sushi makers.
+    // 每块创建的GOT令牌 0.03125
+    // GOT tokens created per block.
+    uint256 public constant GOTPerBlock = 31250000000000000;
+    // 早期GOT的奖金乘数
+    // Bonus muliplier for early GOT makers.
     uint256 public constant BONUS_MULTIPLIER = 10;
     // 迁移者合同。它具有很大的力量。只能通过治理（所有者）进行设置
     // The migrator contract. It has a lot of power. Can only be set through governance (owner).
@@ -112,8 +121,8 @@ contract MasterChef is Ownable {
     // 总分配点。必须是所有池中所有分配点的总和
     // Total allocation points. Must be the sum of all allocation points in all pools.
     uint256 public totalAllocPoint = 0;
-    // SUSHI挖掘开始时的块号
-    // The block number when SUSHI mining starts.
+    // GOT挖掘开始时的块号
+    // The block number when GOT mining starts.
     uint256 public startBlock;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
@@ -126,28 +135,10 @@ contract MasterChef is Ownable {
 
     /**
      * @dev 构造函数
-     * @param _sushi 寿司币地址
-     * @param _devaddr 开发人员地址
-     * @param _sushiPerBlock 每块创建的SUSHI令牌
-     * @param _startBlock SUSHI挖掘开始时的块号
+     * @param _startBlock GOT挖掘开始时的块号
      * @param _bonusEndBlock 奖励结束块号
      */
-    // 以下是sushiswap主厨合约布署时的参数
-    // _sushi: '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2',
-    // _devaddr: '0xF942Dba4159CB61F8AD88ca4A83f5204e8F4A6bd',
-    // _sushiPerBlock: '100000000000000000000',
-    // _startBlock: '10750000',
-    // _bonusEndBlock: '10850000'
-    constructor(
-        SushiToken _sushi,
-        address _devaddr,
-        uint256 _sushiPerBlock,
-        uint256 _startBlock,
-        uint256 _bonusEndBlock
-    ) public {
-        sushi = _sushi;
-        devaddr = _devaddr;
-        sushiPerBlock = _sushiPerBlock;
+    constructor(uint256 _startBlock, uint256 _bonusEndBlock) public {
         bonusEndBlock = _bonusEndBlock;
         startBlock = _startBlock;
     }
@@ -161,7 +152,7 @@ contract MasterChef is Ownable {
 
     /**
      * @dev 将新的lp添加到池中,只能由所有者调用
-     * @param _allocPoint 分配给该池的分配点数。 SUSHI按块分配
+     * @param _allocPoint 分配给该池的分配点数。 GOT按块分配
      * @param _lpToken LP代币合约的地址
      * @param _withUpdate 触发更新所有池的奖励变量。注意gas消耗！
      */
@@ -177,10 +168,9 @@ contract MasterChef is Ownable {
         if (_withUpdate) {
             massUpdatePools();
         }
-        // 分配发生的最后一个块号 = 当前块号 > SUSHI挖掘开始时的块号 > 当前块号 : SUSHI挖掘开始时的块号
-        uint256 lastRewardBlock = block.number > startBlock
-            ? block.number
-            : startBlock;
+        // 分配发生的最后一个块号 = 当前块号 > GOT挖掘开始时的块号 > 当前块号 : GOT挖掘开始时的块号
+        uint256 lastRewardBlock =
+            block.number > startBlock ? block.number : startBlock;
         // 总分配点添加分配给该池的分配点数
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
         // 池子信息推入池子数组
@@ -189,18 +179,18 @@ contract MasterChef is Ownable {
                 lpToken: _lpToken,
                 allocPoint: _allocPoint,
                 lastRewardBlock: lastRewardBlock,
-                accSushiPerShare: 0
+                accGOTPerShare: 0
             })
         );
     }
 
     /**
-     * @dev 更新给定池的SUSHI分配点。只能由所有者调用
+     * @dev 更新给定池的GOT分配点。只能由所有者调用
      * @param _pid 池子ID,池子数组中的索引
-     * @param _allocPoint 新的分配给该池的分配点数。 SUSHI按块分配
+     * @param _allocPoint 新的分配给该池的分配点数。 GOT按块分配
      * @param _withUpdate 触发更新所有池的奖励变量。注意gas消耗！
      */
-    // Update the given pool's SUSHI allocation point. Can only be called by the owner.
+    // Update the given pool's GOT allocation point. Can only be called by the owner.
     function set(
         uint256 _pid,
         uint256 _allocPoint,
@@ -282,13 +272,13 @@ contract MasterChef is Ownable {
     }
 
     /**
-     * @dev 查看功能以查看用户的处理中尚未领取的SUSHI
+     * @dev 查看功能以查看用户的处理中尚未领取的GOT
      * @param _pid 池子id
      * @param _user 用户地址
-     * @return 处理中尚未领取的SUSHI数额
+     * @return 处理中尚未领取的GOT数额
      */
-    // View function to see pending SUSHIs on frontend.
-    function pendingSushi(uint256 _pid, address _user)
+    // View function to see pending GOTs on frontend.
+    function pendingGOT(uint256 _pid, address _user)
         external
         view
         returns (uint256)
@@ -297,29 +287,27 @@ contract MasterChef is Ownable {
         PoolInfo storage pool = poolInfo[_pid];
         // 根据池子id和用户地址,实例化用户信息
         UserInfo storage user = userInfo[_pid][_user];
-        // 每股累积SUSHI
-        uint256 accSushiPerShare = pool.accSushiPerShare;
+        // 每股累积GOT
+        uint256 accGOTPerShare = pool.accGOTPerShare;
         // LPtoken的供应量 = 当前合约在`池子信息.lpToken地址`的余额
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
         // 如果当前区块号 > 池子信息.分配发生的最后一个块号 && LPtoken的供应量 != 0
         if (block.number > pool.lastRewardBlock && lpSupply != 0) {
             // 奖金乘积 = 获取奖金乘积(分配发生的最后一个块号, 当前块号)
-            uint256 multiplier = getMultiplier(
-                pool.lastRewardBlock,
-                block.number
-            );
-            // sushi奖励 = 奖金乘积 * 每块创建的SUSHI令牌 * 池子分配点数 / 总分配点数
-            uint256 sushiReward = multiplier
-                .mul(sushiPerBlock)
-                .mul(pool.allocPoint)
-                .div(totalAllocPoint);
-            // 每股累积SUSHI = 每股累积SUSHI + sushi奖励 * 1e12 / LPtoken的供应量
-            accSushiPerShare = accSushiPerShare.add(
-                sushiReward.mul(1e12).div(lpSupply)
+            uint256 multiplier =
+                getMultiplier(pool.lastRewardBlock, block.number);
+            // GOT奖励 = 奖金乘积 * 每块创建的GOT令牌 * 池子分配点数 / 总分配点数
+            uint256 GOTReward =
+                multiplier.mul(GOTPerBlock).mul(pool.allocPoint).div(
+                    totalAllocPoint
+                );
+            // 每股累积GOT = 每股累积GOT + GOT奖励 * 1e12 / LPtoken的供应量
+            accGOTPerShare = accGOTPerShare.add(
+                GOTReward.mul(1e12).div(lpSupply)
             );
         }
-        // 返回 用户.已添加的数额 * 每股累积SUSHI / 1e12 - 用户.已奖励数额
-        return user.amount.mul(accSushiPerShare).div(1e12).sub(user.rewardDebt);
+        // 返回 用户.已添加的数额 * 每股累积GOT / 1e12 - 用户.已奖励数额
+        return user.amount.mul(accGOTPerShare).div(1e12).sub(user.rewardDebt);
     }
 
     /**
@@ -360,29 +348,39 @@ contract MasterChef is Ownable {
         }
         // 奖金乘积 = 获取奖金乘积(分配发生的最后一个块号, 当前块号)
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
-        // sushi奖励 = 奖金乘积 * 每块创建的SUSHI令牌 * 池子分配点数 / 总分配点数
-        uint256 sushiReward = multiplier
-            .mul(sushiPerBlock)
-            .mul(pool.allocPoint)
-            .div(totalAllocPoint);
-        // 调用sushi的铸造方法, 为管理团队铸造 (`sushi奖励` / 10) token
-        sushi.mint(devaddr, sushiReward.div(10));
-        // 调用sushi的铸造方法, 为当前合约铸造 `sushi奖励` token
-        sushi.mint(address(this), sushiReward);
-        // 每股累积SUSHI = 每股累积SUSHI + sushi奖励 * 1e12 / LPtoken的供应量
-        pool.accSushiPerShare = pool.accSushiPerShare.add(
-            sushiReward.mul(1e12).div(lpSupply)
+        // GOT奖励 = 奖金乘积 * 每块创建的GOT令牌 * 池子分配点数 / 总分配点数
+        uint256 GOTReward =
+            multiplier.mul(GOTPerBlock).mul(pool.allocPoint).div(
+                totalAllocPoint
+            );
+        // 开发者奖励为0.5%
+        uint256 fundReserve = GOTReward.div(fundDivisor);
+        // 调用GOT的铸造方法, 为管理团队铸造 (`GOT奖励` / 20) token
+        IGOT(GOT).mint(address(this), fundReserve);
+        // 当前合约批准fund地址,开发者准备金数额
+        IERC20(GOT).safeApprove(fund, fundReserve);
+        // 调用fund合约的存款方法存入开发者准备金
+        ISimpleERCFund(fund).deposit(
+            GOT,
+            fundReserve,
+            "MasterChef: Fund Reserve"
+        );
+        // 调用GOT的铸造方法, 为当前合约铸造 `GOT奖励` token
+        IGOT(GOT).mint(address(this), GOTReward);
+        // 每股累积GOT = 每股累积GOT + GOT奖励 * 1e12 / LPtoken的供应量
+        pool.accGOTPerShare = pool.accGOTPerShare.add(
+            GOTReward.mul(1e12).div(lpSupply)
         );
         // 池子信息.分配发生的最后一个块号 = 当前块号
         pool.lastRewardBlock = block.number;
     }
 
     /**
-     * @dev 将LP令牌存入MasterChef进行SUSHI分配
+     * @dev 将LP令牌存入MasterChef进行GOT分配
      * @param _pid 池子id
      * @param _amount 数额
      */
-    // Deposit LP tokens to MasterChef for SUSHI allocation.
+    // Deposit LP tokens to MasterChef for GOT allocation.
     function deposit(uint256 _pid, uint256 _amount) public {
         // 实例化池子信息
         PoolInfo storage pool = poolInfo[_pid];
@@ -392,15 +390,14 @@ contract MasterChef is Ownable {
         updatePool(_pid);
         // 如果用户已添加的数额>0
         if (user.amount > 0) {
-            // 待定数额 = 用户.已添加的数额 * 池子.每股累积SUSHI / 1e12 - 用户.已奖励数额
-            uint256 pending = user
-                .amount
-                .mul(pool.accSushiPerShare)
-                .div(1e12)
-                .sub(user.rewardDebt);
+            // 待定数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12 - 用户.已奖励数额
+            uint256 pending =
+                user.amount.mul(pool.accGOTPerShare).div(1e12).sub(
+                    user.rewardDebt
+                );
             if (pending > 0) {
-                // 向当前用户安全发送待定数额的sushi
-                safeSushiTransfer(msg.sender, pending);
+                // 向当前用户安全发送待定数额的GOT
+                safeGOTTransfer(msg.sender, pending);
             }
         }
         if (_amount > 0) {
@@ -413,8 +410,8 @@ contract MasterChef is Ownable {
             // 用户.已添加的数额  = 用户.已添加的数额 + _amount数额
             user.amount = user.amount.add(_amount);
         }
-        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积SUSHI / 1e12
-        user.rewardDebt = user.amount.mul(pool.accSushiPerShare).div(1e12);
+        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
+        user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
         // 触发存款事件
         emit Deposit(msg.sender, _pid, _amount);
     }
@@ -434,13 +431,12 @@ contract MasterChef is Ownable {
         require(user.amount >= _amount, "withdraw: not good");
         // 将给定池的奖励变量更新为最新
         updatePool(_pid);
-        // 待定数额 = 用户.已添加的数额 * 池子.每股累积SUSHI / 1e12 - 用户.已奖励数额
-        uint256 pending = user.amount.mul(pool.accSushiPerShare).div(1e12).sub(
-            user.rewardDebt
-        );
+        // 待定数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12 - 用户.已奖励数额
+        uint256 pending =
+            user.amount.mul(pool.accGOTPerShare).div(1e12).sub(user.rewardDebt);
         if (pending > 0) {
-            // 向当前用户安全发送待定数额的sushi
-            safeSushiTransfer(msg.sender, pending);
+            // 向当前用户安全发送待定数额的GOT
+            safeGOTTransfer(msg.sender, pending);
         }
         if (_amount > 0) {
             // 用户.已添加的数额  = 用户.已添加的数额 - _amount数额
@@ -448,8 +444,8 @@ contract MasterChef is Ownable {
             // 调用池子.lptoken的安全发送方法,将_amount数额的lp token从当前合约发送到当前用户
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
         }
-        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积SUSHI / 1e12
-        user.rewardDebt = user.amount.mul(pool.accSushiPerShare).div(1e12);
+        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
+        user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
         // 触发提款事件
         emit Withdraw(msg.sender, _pid, _amount);
     }
@@ -476,33 +472,37 @@ contract MasterChef is Ownable {
     }
 
     /**
-     * @dev 安全的寿司转移功能，以防万一舍入错误导致池中没有足够的寿司
+     * @dev 安全的GOT转移功能，以防万一舍入错误导致池中没有足够的GOT
      * @param _to to地址
      * @param _amount 数额
      */
-    // Safe sushi transfer function, just in case if rounding error causes pool to not have enough SUSHIs.
-    function safeSushiTransfer(address _to, uint256 _amount) internal {
-        // sushi余额 = 当前合约在sushi的余额
-        uint256 sushiBal = sushi.balanceOf(address(this));
-        // 如果数额 > sushi余额
-        if (_amount > sushiBal) {
-            // 按照sushi余额发送sushi到to地址
-            sushi.transfer(_to, sushiBal);
+    // Safe GOT transfer function, just in case if rounding error causes pool to not have enough GOTs.
+    function safeGOTTransfer(address _to, uint256 _amount) internal {
+        // GOT余额 = 当前合约在GOT的余额
+        uint256 GOTBal = IERC20(GOT).balanceOf(address(this));
+        // 如果数额 > GOT余额
+        if (_amount > GOTBal) {
+            // 按照GOT余额发送GOT到to地址
+            IERC20(GOT).safeTransfer(_to, GOTBal);
         } else {
-            // 按照_amount数额发送sushi到to地址
-            sushi.transfer(_to, _amount);
+            // 按照_amount数额发送GOT到to地址
+            IERC20(GOT).safeTransfer(_to, _amount);
         }
     }
 
     /**
-     * @dev 通过先前的开发者地址更新开发者地址
-     * @param _devaddr 开发者地址
+     * @dev 更新开发者奖励基金地址
+     * @param _fund 开发者奖励基金地址
      */
-    // Update dev address by the previous dev.
-    function dev(address _devaddr) public {
-        // 确认当前账户是开发者地址
-        require(msg.sender == devaddr, "dev: wut?");
-        // 赋值新地址
-        devaddr = _devaddr;
+    function setFund(address _fund) public onlyOwner {
+        fund = _fund;
+    }
+
+    /**
+     * @dev 开发者奖励基金比例
+     * @param _fundDivisor 开发者地址
+     */
+    function setFundDivisor(uint256 _fundDivisor) public onlyOwner {
+        fundDivisor = _fundDivisor;
     }
 }

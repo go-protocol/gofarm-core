@@ -99,15 +99,14 @@ contract MasterChef is Ownable {
     // Fund address.开发者奖励基金地址
     address public fund = 0x57b91C4279A435913A64c490210d61978A0880C0;
     uint256 public fundDivisor = 20;
-    // 奖励结束块号
-    // Block number when bonus GOT period ends.
-    uint256 public bonusEndBlock;
-    // 每块创建的GOT令牌 0.03125
+
+    // 奖励发放多少个周期
+    uint256 rewardEpoch public constant = 12;
+    // 周期区块数量
+    uint256 epochPeriod public constant = 28800 * 30;
+    // 每块创建的GOT令牌 0.003125
     // GOT tokens created per block.
-    uint256 public constant GOTPerBlock = 31250000000000000;
-    // 早期GOT的奖金乘数
-    // Bonus muliplier for early GOT makers.
-    uint256 public constant BONUS_MULTIPLIER = 10;
+    uint256 public constant GOTPerBlock = 0.003125 ether;
     // 迁移者合同。它具有很大的力量。只能通过治理（所有者）进行设置
     // The migrator contract. It has a lot of power. Can only be set through governance (owner).
     IMigratorChef public migrator;
@@ -136,10 +135,8 @@ contract MasterChef is Ownable {
     /**
      * @dev 构造函数
      * @param _startBlock GOT挖掘开始时的块号
-     * @param _bonusEndBlock 奖励结束块号
      */
-    constructor(uint256 _startBlock, uint256 _bonusEndBlock) public {
-        bonusEndBlock = _bonusEndBlock;
+    constructor(uint256 _startBlock) public {
         startBlock = _startBlock;
     }
 
@@ -245,29 +242,51 @@ contract MasterChef is Ownable {
      * @dev 给出from和to的块号,返回奖励乘积
      * @param _from from块号
      * @param _to to块号
-     * @return 奖励乘积
+     * @return multiplier 奖励乘数
      */
     // Return reward multiplier over the given _from to _to block.
     function getMultiplier(uint256 _from, uint256 _to)
         public
         view
-        returns (uint256)
+        returns (uint256 multiplier)
     {
-        // 如果to块号 <= 奖励结束块号
-        if (_to <= bonusEndBlock) {
-            // 返回 (to块号 - from块号) * 奖金乘数
-            return _to.sub(_from).mul(BONUS_MULTIPLIER);
-            // 否则如果 from块号 >= 奖励结束块号
-        } else if (_from >= bonusEndBlock) {
+        // 奖励结束块号
+        uint256 bonusEndBlock = startBlock.add(epochPeriod.mul(rewardEpoch));
+
+        // 如果 from块号 >= 奖励结束块号
+        if (_from >= bonusEndBlock) {
             // 返回to块号 - from块号
-            return _to.sub(_from);
+            multiplier = _to.sub(_from);
             // 否则
         } else {
-            // 返回 (奖励结束块号 - from块号) * 奖金乘数 + (to块号 - 奖励结束块号)
-            return
-                bonusEndBlock.sub(_from).mul(BONUS_MULTIPLIER).add(
-                    _to.sub(bonusEndBlock)
+            // from所在的周期 = from距离开始时间过了多少个区块 / 周期区块数量  (取整)
+            uint256 fromEpoch = _from.sub(startBlock).div(epochPeriod);
+            // to之前的周期 = to距离开始时间过了多少个区块 / 周期区块数量  (取整)
+            uint256 toEpoch = _to.sub(startBlock).div(epochPeriod);
+            // from所在的周期内还剩多少个区块 = 周期区块数量 - from距离开始时间过了多少个区块 % 周期区块数量
+            uint256 fromEpochBlock =
+                epochPeriod.sub(_from.sub(startBlock).mod(epochPeriod));
+            // to剩余的区块 = (to - 开始的区块号) % 周期区块数量
+            uint256 toEpochBlock = _to.sub(startBlock).mod(epochPeriod);
+            // 乘数 = from所在的周期内还剩多少个区块 * 2 ** (奖励发放的周期数量 - from所在的周期)
+            multiplier = fromEpochBlock.mul(2**rewardEpoch.sub(fromEpoch));
+            // 从to所在的周期向from所在的周期递减循环
+            for (uint256 i = toEpoch; i > fromEpoch; i--) {
+                // 幂 = 如果 i >= 奖励发放的周期数量 ? 0 : 奖励发放的周期数量 - i
+                uint256 pow = i > rewardEpoch ? 0 : rewardEpoch.sub(i);
+                // 乘数 = 乘数 + 每个周期的区块数量 * 2 ** 幂
+                multiplier = multiplier.add(epochPeriod.mul(2**pow));
+            }
+            // 如果 to之前的周期 < 奖励结束块号
+            if (toEpoch < rewardEpoch) {
+                // 乘数 = 乘数 + to剩余的区块 * 2 ** (奖励发放的周期数量 - to之前的周期 )
+                multiplier = multiplier.add(
+                    toEpochBlock.mul(2**rewardEpoch.sub(toEpoch))
                 );
+            } else {
+                // 乘数 = 乘数 + to剩余的区块
+                multiplier = multiplier.add(toEpochBlock);
+            }
         }
     }
 
@@ -417,17 +436,40 @@ contract MasterChef is Ownable {
     }
 
     /**
-     * @dev 从MasterChef提取LP令牌
+     * @dev 从MasterChef提取收益
      * @param _pid 池子id
-     * @param _amount 数额
      */
-    // Withdraw LP tokens from MasterChef.
-    function withdraw(uint256 _pid, uint256 _amount) public {
+    // Withdraw GOT tokens from MasterChef.
+    function harvest(uint256 _pid) public {
         // 实例化池子信息
         PoolInfo storage pool = poolInfo[_pid];
         // 根据池子id和当前用户地址,实例化用户信息
         UserInfo storage user = userInfo[_pid][msg.sender];
-        // 确认用户.已添加数额 >= _amount数额
+        // 将给定池的奖励变量更新为最新
+        updatePool(_pid);
+        // 待定数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12 - 用户.已奖励数额
+        uint256 pending =
+            user.amount.mul(pool.accGOTPerShare).div(1e12).sub(user.rewardDebt);
+        if (pending > 0) {
+            // 向当前用户安全发送待定数额的GOT
+            safeGOTTransfer(msg.sender, pending);
+        }
+        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
+        user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
+    }
+
+    /**
+     * @dev 从MasterChef提取LP令牌和收益
+     * @param _pid 池子id
+     * @param _amount 数额
+     */
+    // Withdraw LP tokens from MasterChef.
+    function withdraw(uint256 _pid, uint256 _amount) public  {
+        // 实例化池子信息
+        PoolInfo storage pool = poolInfo[_pid];
+        // 根据池子id和当前用户地址,实例化用户信息
+        UserInfo storage user = userInfo[_pid][msg.sender];
+        // 确认用户.已添加数额 >0
         require(user.amount >= _amount, "withdraw: not good");
         // 将给定池的奖励变量更新为最新
         updatePool(_pid);
@@ -445,9 +487,41 @@ contract MasterChef is Ownable {
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
         }
         // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
-        user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
+        user.rewardDebt = amount.mul(pool.accGOTPerShare).div(1e12);
         // 触发提款事件
         emit Withdraw(msg.sender, _pid, _amount);
+    }
+
+    /**
+     * @dev 从MasterChef提取LP令牌和收益
+     * @param _pid 池子id
+     */
+    // Withdraw LP tokens from MasterChef.
+    function exit(uint256 _pid) public  {
+        // 实例化池子信息
+        PoolInfo storage pool = poolInfo[_pid];
+        // 根据池子id和当前用户地址,实例化用户信息
+        UserInfo storage user = userInfo[_pid][msg.sender];
+        // 确认用户.已添加数额 >0
+        require(user.amount > 0, "withdraw: not good");
+        // 将给定池的奖励变量更新为最新
+        updatePool(_pid);
+        // 待定数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12 - 用户.已奖励数额
+        uint256 pending =
+            user.amount.mul(pool.accGOTPerShare).div(1e12).sub(user.rewardDebt);
+        if (pending > 0) {
+            // 向当前用户安全发送待定数额的GOT
+            safeGOTTransfer(msg.sender, pending);
+        }
+        uint256 amount = user.amount;
+            // 调用池子.lptoken的安全发送方法,将_amount数额的lp token从当前合约发送到当前用户
+            pool.lpToken.safeTransfer(address(msg.sender), amount);
+            // 用户.已添加的数额  = 0
+            user.amount = 0;
+        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
+        user.rewardDebt = amount.mul(pool.accGOTPerShare).div(1e12);
+        // 触发提款事件
+        emit Withdraw(msg.sender, _pid, amount);
     }
 
     /**

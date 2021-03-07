@@ -3,7 +3,7 @@ pragma solidity 0.6.12;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
-import "uniswapv2/interfaces/IUniswapV2Pair.sol";
+import "./uniswapv2/interfaces/IUniswapV2Pair.sol";
 
 interface IMasterChef {
     function getMultiplier(uint256 _from, uint256 _to)
@@ -47,19 +47,19 @@ contract GetApy {
 
     function getGOTPrice() public view returns (uint256) {
         (uint256 reserve0, uint256 reserve1, ) =
-            IGoSwapPair(GOT_HUSD_LP).getReserves();
+            IUniswapV2Pair(GOT_HUSD_LP).getReserves();
         return (reserve0 * 10**28) / reserve1;
     }
 
     function getGOCPrice() public view returns (uint256) {
         (uint256 reserve0, uint256 reserve1, ) =
-            IGoSwapPair(GOC_HUSD_LP).getReserves();
+            IUniswapV2Pair(GOC_HUSD_LP).getReserves();
         return (reserve0 * 10**28) / reserve1;
     }
 
     function getGOSPrice() public view returns (uint256) {
         (uint256 reserve0, uint256 reserve1, ) =
-            IGoSwapPair(GOS_HUSD_LP).getReserves();
+            IUniswapV2Pair(GOS_HUSD_LP).getReserves();
         return (reserve0 * 10**28) / reserve1;
     }
 
@@ -82,11 +82,11 @@ contract GetApy {
     function getPoolPrice(address lpToken) public view returns (uint256) {
         uint256 totalSupply = IERC20(lpToken).totalSupply();
         uint256 balanceOf = IERC20(lpToken).balanceOf(masterChef);
-        address token0 = IGoSwapPair(lpToken).token0();
-        address token1 = IGoSwapPair(lpToken).token1();
+        address token0 = IUniswapV2Pair(lpToken).token0();
+        address token1 = IUniswapV2Pair(lpToken).token1();
 
         (uint256 reserve0, uint256 reserve1, ) =
-            IGoSwapPair(lpToken).getReserves();
+            IUniswapV2Pair(lpToken).getReserves();
 
         if (token0 == HUSD || token1 == HUSD) {
             uint256 reserve = token0 == HUSD ? reserve0 : reserve1;

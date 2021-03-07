@@ -446,7 +446,7 @@ contract MasterChef is Ownable {
      * @param _pid 池子id
      */
     // Withdraw GOT tokens from MasterChef.
-    function withdraw(uint256 _pid) public {
+    function harvest(uint256 _pid) public {
         // 实例化池子信息
         PoolInfo storage pool = poolInfo[_pid];
         // 根据池子id和当前用户地址,实例化用户信息
@@ -464,6 +464,40 @@ contract MasterChef is Ownable {
         user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
     }
 
+    /**
+     * @dev 从MasterChef提取LP令牌
+     * @param _pid 池子id
+     * @param _amount 数额
+     */
+    // Withdraw LP tokens from MasterChef.
+    function withdraw(uint256 _pid, uint256 _amount) public {
+        // 实例化池子信息
+        PoolInfo storage pool = poolInfo[_pid];
+        // 根据池子id和当前用户地址,实例化用户信息
+        UserInfo storage user = userInfo[_pid][msg.sender];
+        // 确认用户.已添加数额 >= _amount数额
+        require(user.amount >= _amount, "withdraw: not good");
+        // 将给定池的奖励变量更新为最新
+        updatePool(_pid);
+        // 待定数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12 - 用户.已奖励数额
+        uint256 pending = user.amount.mul(pool.accGOTPerShare).div(1e12).sub(
+            user.rewardDebt
+        );
+        if (pending > 0) {
+            // 向当前用户安全发送待定数额的GOT
+            safeGOTTransfer(msg.sender, pending);
+        }
+        if (_amount > 0) {
+            // 用户.已添加的数额  = 用户.已添加的数额 - _amount数额
+            user.amount = user.amount.sub(_amount);
+            // 调用池子.lptoken的安全发送方法,将_amount数额的lp token从当前合约发送到当前用户
+            pool.lpToken.safeTransfer(address(msg.sender), _amount);
+        }
+        // 用户.已奖励数额 = 用户.已添加的数额 * 池子.每股累积GOT / 1e12
+        user.rewardDebt = user.amount.mul(pool.accGOTPerShare).div(1e12);
+        // 触发提款事件
+        emit Withdraw(msg.sender, _pid, _amount);
+    }
     /**
      * @dev 从MasterChef提取LP令牌和收益
      * @param _pid 池子id

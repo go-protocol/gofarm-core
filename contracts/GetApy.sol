@@ -30,20 +30,20 @@ contract GetApy {
     using SafeMath for uint256;
 
     address public constant masterChef =
-        0xC9FAA89989bd6562dbc67f34F825028A79f4f1B1;
+        0x7dCeBC34F55b52df742C91581089ebD0BCBD254F;
     uint256 public constant GOTPerBlock = 0.003125 ether;
     uint256 public constant epochPeriod = 28800;
 
     address public constant GOT = 0xA7d5b5Dbc29ddef9871333AD2295B2E7D6F12391;
     address public constant GOC = 0x271B54EBe36005A7296894F819D626161C44825C;
-    address public constant GOS = 0x36b29B53c483bd00978D40126E614bb7e45d8354;
-    address public constant HUSD = 0x0f548051B135fa8f7F6190cb78Fd13eCB544fEE6;
+    address public constant GOS = 0x3bb34419a8E7d5E5c68B400459A8eC1AFfe9c56E;
+    address public constant HUSD = 0x0298c2b32eaE4da002a15f36fdf7615BEa3DA047;
     address public constant GOT_HUSD_LP =
-        0xC31b9f33fB2C54B789C263781CCEE9b23b747677;
+        0x11d6a89Ce4Bb44138219ae11C1535F52E16B7Bd2;
     address public constant GOC_HUSD_LP =
-        0x28BFcd3c234B710d93232B5e51a2e8b8a5bb9D2f;
+        0xEe09490789564e22c9b6252a2419A57055957a47;
     address public constant GOS_HUSD_LP =
-        0xd0E8D781fAe230E3DA6e45ED881c99BA639cA400;
+        0xdaDE2b002d135c5796f7cAAd544f9Bc043D05C9B;
 
     function getGOTPrice() public view returns (uint256) {
         (uint256 reserve0, uint256 reserve1, ) =

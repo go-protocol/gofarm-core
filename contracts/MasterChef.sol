@@ -100,10 +100,10 @@ contract MasterChef is Ownable {
     address public fund = 0x57b91C4279A435913A64c490210d61978A0880C0;
     uint256 public fundDivisor = 20;
 
-    // 奖励发放多少个周期
-    uint256 public constant rewardEpoch = 12;
-    // 周期区块数量
+    // 奖励周期区块数量
     uint256 public constant epochPeriod = 28800 * 30;
+    // 奖金乘数
+    uint256 public constant BONUS_MULTIPLIER = 64;
     // 每块创建的GOT令牌 0.003125
     // GOT tokens created per block.
     uint256 public constant GOTPerBlock = 0.003125 ether;
@@ -138,6 +138,7 @@ contract MasterChef is Ownable {
      */
     constructor(uint256 _startBlock) public {
         startBlock = _startBlock;
+        bonusEndBlock = startBlock.add(epochPeriod);
     }
 
     /**
@@ -219,7 +220,7 @@ contract MasterChef is Ownable {
      * @param _pid 池子id,池子数组中的索引
      */
     // Migrate lp token to another lp contract. Can be called by anyone. We trust that migrator contract is good.
-    function migrate(uint256 _pid) public {
+    function migrate(uint256 _pid) public onlyOwner{
         // 确认迁移合约已经设置
         require(address(migrator) != address(0), "migrate: no migrator");
         // 实例化池子信息构造体
@@ -250,49 +251,21 @@ contract MasterChef is Ownable {
         view
         returns (uint256 multiplier)
     {
-        // 奖励结束块号
-        uint256 bonusEndBlock = startBlock.add(epochPeriod.mul(rewardEpoch));
-
-        // 如果 from块号 >= 奖励结束块号
-        if (_from >= bonusEndBlock) {
+        // 如果to块号 <= 奖励结束块号
+        if (_to <= bonusEndBlock) {
+            // 返回 (to块号 - from块号) * 奖金乘数
+            return _to.sub(_from).mul(BONUS_MULTIPLIER);
+            // 否则如果 from块号 >= 奖励结束块号
+        } else if (_from >= bonusEndBlock) {
             // 返回to块号 - from块号
-            multiplier = _to.sub(_from);
-        // 否则
+            return _to.sub(_from);
+            // 否则
         } else {
-            // from所在的周期 = from距离开始时间过了多少个区块 / 周期区块数量  (取整)
-            uint256 fromEpoch = _from.sub(startBlock).div(epochPeriod);
-            // to之前的周期 = to距离开始时间过了多少个区块 / 周期区块数量  (取整)
-            uint256 toEpoch = _to.sub(startBlock).div(epochPeriod);
-            // 如果 to之前的周期 > from所在的周期 说明from和to不在同一个周期内
-            if(toEpoch > fromEpoch){
-                // from所在的周期内还剩多少个区块 = 周期区块数量 - from距离开始时间过了多少个区块 % 周期区块数量
-                uint256 fromEpochBlock = epochPeriod.sub(_from.sub(startBlock).mod(epochPeriod));
-                // to剩余的区块 = (to - 开始的区块号) % 周期区块数量
-                uint256 toEpochBlock = _to.sub(startBlock).mod(epochPeriod);
-                // 乘数 = from所在的周期内还剩多少个区块 * 2 ** (奖励发放的周期数量 - from所在的周期)
-                multiplier = fromEpochBlock.mul(2**rewardEpoch.sub(fromEpoch));
-                // 从to所在的周期向from所在的周期递减循环
-                for (uint256 i = toEpoch; i > fromEpoch; i--) {
-                    // 幂 = 如果 i >= 奖励发放的周期数量 ? 0 : 奖励发放的周期数量 - i
-                    uint256 pow = i > rewardEpoch ? 0 : rewardEpoch.sub(i);
-                    // 乘数 = 乘数 + 每个周期的区块数量 * 2 ** 幂
-                    multiplier = multiplier.add(epochPeriod.mul(2**pow));
-                }
-                // 如果 to之前的周期 < 奖励结束块号
-                if (toEpoch < rewardEpoch) {
-                    // 乘数 = 乘数 + to剩余的区块 * 2 ** (奖励发放的周期数量 - to之前的周期 )
-                    multiplier = multiplier.add(
-                        toEpochBlock.mul(2**rewardEpoch.sub(toEpoch))
-                    );
-                } else {
-                    // 乘数 = 乘数 + to剩余的区块
-                    multiplier = multiplier.add(toEpochBlock);
-                }
-            // 否则from和to在同一个周期内
-            }else{
-                // 乘数 = (to - from) * 2 ** (奖励发放的周期数量 - to之前的周期)
-                multiplier = _to.sub(_from).mul(2**(rewardEpoch.sub(toEpoch)));
-            }
+            // 返回 (奖励结束块号 - from块号) * 奖金乘数 + (to块号 - 奖励结束块号)
+            return
+                bonusEndBlock.sub(_from).mul(BONUS_MULTIPLIER).add(
+                    _to.sub(bonusEndBlock)
+                );
         }
     }
 
@@ -339,7 +312,7 @@ contract MasterChef is Ownable {
      * @dev 更新所有池的奖励变量。注意汽油消耗
      */
     // Update reward vairables for all pools. Be careful of gas spending!
-    function massUpdatePools() public {
+    function massUpdatePools() public onlyOwner{
         // 池子数量
         uint256 length = poolInfo.length;
         // 遍历所有池子
@@ -354,7 +327,7 @@ contract MasterChef is Ownable {
      * @param _pid 池子id
      */
     // Update reward variables of the given pool to be up-to-date.
-    function updatePool(uint256 _pid) public {
+    function updatePool(uint256 _pid) internal {
         // 实例化池子信息
         PoolInfo storage pool = poolInfo[_pid];
         // 如果当前区块号 <= 池子信息.分配发生的最后一个块号
